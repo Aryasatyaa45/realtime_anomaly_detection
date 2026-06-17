@@ -1,0 +1,29 @@
+# === Data (file besar — jangan di-commit) ===
+data/*.csv
+data/*.parquet
+
+# === Python ===
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+.ipynb_checkpoints/
+
+# === Artefak model ===
+ml/models/*.pkl
+ml/models/*.joblib
+
+# === Rahasia / config lokal ===
+.env
+
+# === Output pipeline ===
+paimon-warehouse/
+*.log
+
+# === Editor / OS ===
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

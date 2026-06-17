@@ -1,0 +1,65 @@
+# Orkestrasi seluruh pipeline anomaly detection.
+# Service ditambahkan bertahap mengikuti ROADMAP:
+#   Minggu 3 -> iggy (+ producer)
+#   Minggu 4 -> flink + ml scorer + paimon
+#   Minggu 5 -> postgres (+ dashboard lokal)
+#
+# Jalankan broker saja: docker compose up -d iggy
+
+name: realtime-anomaly-detection
+
+services:
+  # --- Minggu 3: Broker pesan (Apache Iggy) ---
+  iggy:
+    image: apache/iggy:0.8.0          # tag tetap (bukan :latest) demi reproducibility
+    container_name: iggy
+    environment:
+      # Bind ke 0.0.0.0 supaya port bisa diakses dari luar container.
+      IGGY_HTTP_ADDRESS: 0.0.0.0:3000
+      IGGY_TCP_ADDRESS: 0.0.0.0:8090
+      # Kredensial root awal (default Iggy: iggy/iggy). Ganti untuk produksi.
+      IGGY_ROOT_USERNAME: ${IGGY_ROOT_USERNAME:-iggy}
+      IGGY_ROOT_PASSWORD: ${IGGY_ROOT_PASSWORD:-iggy}
+    ports:
+      - "8090:8090"   # TCP (binary protocol)
+      - "3000:3000"   # HTTP REST API <- dipakai producer Minggu 3
+    volumes:
+      - iggy_data:/local_data
+    # Iggy memakai io_uring + thread affinity; tuning di bawah mencegah error izin.
+    cap_add:
+      - SYS_NICE
+    security_opt:
+      - seccomp:unconfined
+    ulimits:
+      memlock: -1
+    healthcheck:
+      # Cek HTTP API hidup. /ping dilayani server tanpa perlu autentikasi.
+      test: ["CMD-SHELL", "curl -fsS http://localhost:3000/ping || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  # --- Minggu 3: Producer (replay CSV -> Iggy) ---
+  # Untuk Minggu 3 producer divalidasi dari host (venv). Service container ini
+  # disiapkan untuk dipakai penuh di Minggu 4 (pipeline lewat docker compose up).
+  # producer:
+  #   build: ./producer
+  #   container_name: producer
+  #   depends_on:
+  #     iggy:
+  #       condition: service_healthy
+  #   env_file: .env
+  #   environment:
+  #     IGGY_HOST: iggy            # nama service di jaringan compose
+  #   volumes:
+  #     - ./data:/data:ro
+
+  # --- Minggu 4: Flink + ML scorer + Paimon ---
+  # (ditambahkan saat Minggu 4)
+
+  # --- Minggu 5: Postgres (sink dashboard) ---
+  # (ditambahkan saat Minggu 5)
+
+volumes:
+  iggy_data:

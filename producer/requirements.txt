@@ -1,0 +1,4 @@
+# Producer pakai HTTP REST API Iggy (bukan SDK apache-iggy) demi reproducibility
+# di Windows. Sengaja ringan: CSV dibaca baris-per-baris pakai modul `csv` bawaan.
+requests==2.32.3
+python-dotenv==1.0.1
