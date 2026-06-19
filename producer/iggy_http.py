@@ -181,14 +181,23 @@ class IggyHTTPClient:
         partition_id: int = 0,
         consumer_id: int = 1,
         auto_commit: bool = True,
+        strategy: str = "first",
+        strategy_value: int = 0,
     ) -> list[dict[str, Any]]:
-        """Ambil pesan dari awal partisi dan kembalikan payload yang sudah ter-decode.
+        """Ambil pesan dari partisi dan kembalikan payload yang sudah ter-decode.
 
         Args:
             count: Maksimum pesan yang diambil.
             partition_id: Partisi (berbasis-0).
             consumer_id: ID consumer.
             auto_commit: Bila True, offset di-commit otomatis di server.
+            strategy: Strategi poll Iggy — "first" (dari awal partisi) atau "offset"
+                (mulai dari `strategy_value`, dipakai bridge untuk konsumsi progresif
+                dengan melacak offset sendiri). CATATAN: query param yang benar adalah
+                `strategy=<kind>` & `value=<n>` (FLAT). Bentuk dotted `strategy.kind`
+                diam-diam diabaikan server 0.8 dan selalu jatuh ke "first".
+            strategy_value: Offset awal bila strategy="offset" (berbasis-0, inklusif);
+                diabaikan untuk "first".
 
         Returns:
             List dict hasil decode payload JSON tiap pesan.
@@ -199,8 +208,8 @@ class IggyHTTPClient:
         params = {
             "consumer_id": consumer_id,
             "partition_id": partition_id,
-            "strategy.kind": "first",
-            "strategy.value": 0,
+            "strategy": strategy,
+            "value": strategy_value,
             "count": count,
             "auto_commit": str(auto_commit).lower(),
         }

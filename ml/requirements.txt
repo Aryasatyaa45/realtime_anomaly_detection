@@ -1,7 +1,9 @@
-pandas
-numpy
-scikit-learn
-pyod
-river
+# Versi dipin PERSIS sama dengan environment training (Minggu 2) agar unpickle model
+# (ecod.pkl/hst.pkl) tidak gagal karena beda versi. pandas sengaja TIDAK disertakan —
+# scorer service hanya butuh inferensi (scaler sklearn + numpy + pyod + river).
+numpy==2.4.6
+scipy==1.17.1
+scikit-learn==1.9.0
+pyod==3.6.0
+river==0.25.0
 joblib
-python-dotenv
