@@ -27,6 +27,9 @@ RUN pip install --no-cache-dir --upgrade pip && \
 # Jar konektor diletakkan di /opt/flink/lib agar otomatis masuk classpath JM & TM.
 COPY jars/paimon-flink-1.20-1.4.1.jar /opt/flink/lib/
 COPY jars/flink-shaded-hadoop-2-uber-2.8.3-10.0.jar /opt/flink/lib/
+# Minggu 5: sink kedua ke Postgres (serving dashboard). JDBC connector Flink + driver Postgres.
+COPY jars/flink-connector-jdbc-3.3.0-1.20.jar /opt/flink/lib/
+COPY jars/postgresql-42.7.4.jar /opt/flink/lib/
 
 # Warehouse Paimon (Minggu 4e). Dibuat milik user `flink` (uid 9999) DI IMAGE supaya saat
 # volume named `paimon_data` pertama kali di-mount kosong ke sini, Docker meng-init volume

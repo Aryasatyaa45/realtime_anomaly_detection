@@ -185,6 +185,49 @@ def ensure_paimon_table(t_env: StreamTableEnvironment, warehouse: str) -> None:
     )
 
 
+def ensure_postgres_table(t_env: StreamTableEnvironment) -> None:
+    """Daftarkan tabel Flink `pg_scores` ber-connector JDBC -> menulis ke Postgres (Minggu 5).
+
+    Ini sink KEDUA (di samping Paimon): Postgres jadi serving layer yang dibaca dashboard
+    Streamlit, supaya code path lokal == online (Supabase) saat deploy Level 2. Tabel Postgres
+    `scores` TIDAK dibuat oleh connector ini — sudah disiapkan `db/init.sql` saat container
+    Postgres init. Kolom Flink dibuat lowercase Indonesia agar cocok 1:1 dengan kolom Postgres
+    (JDBC sink men-generate `INSERT INTO scores (waktu, amount, ...)` memakai NAMA kolom).
+
+    Kredensial & alamat DB diambil dari env (default cocok dengan service `postgres` di compose).
+    `sink.buffer-flush.*` dikecilkan agar baris cepat terlihat di dashboard (latensi rendah).
+
+    Args:
+        t_env: StreamTableEnvironment (berbagi env dengan DataStream).
+    """
+    host = os.environ.get("POSTGRES_HOST", "postgres")
+    port = os.environ.get("POSTGRES_PORT", "5432")
+    db = os.environ.get("POSTGRES_DB", "anomaly")
+    user = os.environ.get("POSTGRES_USER", "anomaly")
+    password = os.environ.get("POSTGRES_PASSWORD", "anomaly")
+
+    t_env.execute_sql(
+        f"""
+        CREATE TABLE pg_scores (
+            waktu DOUBLE,
+            amount DOUBLE,
+            kelas INT,
+            skor_ecod DOUBLE,
+            skor_hst DOUBLE,
+            is_anomali BOOLEAN
+        ) WITH (
+            'connector' = 'jdbc',
+            'url' = 'jdbc:postgresql://{host}:{port}/{db}',
+            'table-name' = 'scores',
+            'username' = '{user}',
+            'password' = '{password}',
+            'sink.buffer-flush.max-rows' = '50',
+            'sink.buffer-flush.interval' = '2s'
+        )
+        """
+    )
+
+
 def main() -> None:
     """Bangun & jalankan pipeline 4e: socket -> skor per-event -> sink Paimon."""
     host = os.environ.get("BRIDGE_HOST", "bridge")
@@ -202,6 +245,7 @@ def main() -> None:
 
     t_env = StreamTableEnvironment.create(env)
     ensure_paimon_table(t_env, warehouse)
+    ensure_postgres_table(t_env)
 
     scored = (
         socket_text_stream(env, host, port)
@@ -209,10 +253,20 @@ def main() -> None:
         .filter(lambda r: r[3] >= 0.0)  # buang Row sentinel (skor_ecod = -1.0)
     )
 
-    # from_data_stream -> Table (skema dari SCORE_ROW_TYPE), lalu INSERT ke tabel Paimon.
-    # execute_insert mengirim job sendiri (dipakai dgn `flink run -d` = detached), jadi tak
-    # perlu env.execute().
-    t_env.from_data_stream(scored).execute_insert("paimon.`default`.scores")
+    # Satu stream skor -> DUA sink via StatementSet: Paimon (lakehouse) + Postgres (serving
+    # dashboard). Keduanya sink JVM murni (bukan operator Python tambahan), jadi fan-out aman —
+    # beda dgn operator window Python di 4d yang rapuh. Source socket diproses sekali lalu
+    # dicabang ke dua sink. `execute()` mengirim job sendiri (detached, spt execute_insert),
+    # jadi tak perlu env.execute().
+    t_env.create_temporary_view("scored_view", t_env.from_data_stream(scored))
+    stmt = t_env.create_statement_set()
+    stmt.add_insert_sql("INSERT INTO paimon.`default`.scores SELECT * FROM scored_view")
+    # Kolom pg_scores (lowercase) dipetakan positional dari kolom scored_view (Time, Amount, ...).
+    stmt.add_insert_sql(
+        "INSERT INTO pg_scores "
+        "SELECT `Time`, `Amount`, `Class`, skor_ecod, skor_hst, is_anomali FROM scored_view"
+    )
+    stmt.execute()
 
 
 if __name__ == "__main__":
