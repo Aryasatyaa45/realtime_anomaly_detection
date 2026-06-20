@@ -80,6 +80,9 @@ services:
     command: jobmanager
     ports:
       - "8081:8081"                  # Flink Web UI
+    volumes:
+      # Warehouse Paimon dibagi JM (committer) & TM (writer) -> harus volume yang SAMA.
+      - paimon_data:/opt/paimon
     environment:
       # Memori dibatasi: mesin dev ~4 GB (VM Docker) harus memuat iggy+bridge+JM+TM sekaligus.
       - |
@@ -94,6 +97,8 @@ services:
     image: anomaly-flink:1.20.4      # reuse image hasil build jobmanager
     container_name: taskmanager
     command: taskmanager
+    volumes:
+      - paimon_data:/opt/paimon       # warehouse Paimon bersama (lihat jobmanager)
     environment:
       - |
         FLINK_PROPERTIES=
@@ -128,3 +133,4 @@ services:
 
 volumes:
   iggy_data:
+  paimon_data:

@@ -28,5 +28,11 @@ RUN pip install --no-cache-dir --upgrade pip && \
 COPY jars/paimon-flink-1.20-1.4.1.jar /opt/flink/lib/
 COPY jars/flink-shaded-hadoop-2-uber-2.8.3-10.0.jar /opt/flink/lib/
 
+# Warehouse Paimon (Minggu 4e). Dibuat milik user `flink` (uid 9999) DI IMAGE supaya saat
+# volume named `paimon_data` pertama kali di-mount kosong ke sini, Docker meng-init volume
+# dengan ownership ini -> Writer di TaskManager (jalan sbg flink) bisa mkdir bucket. Tanpa ini
+# volume default root-owned -> "Mkdirs failed to create .../bucket-0".
+RUN mkdir -p /opt/paimon && chown flink:flink /opt/paimon
+
 # Kode job (di-submit via `flink run -py /opt/flink_job/job.py`).
 COPY job.py /opt/flink_job/job.py
