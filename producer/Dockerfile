@@ -9,7 +9,7 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY producer.py consumer_test.py iggy_http.py ./
+COPY producer.py consumer_test.py iggy_http.py bridge.py ./
 
 # Override argumen via docker-compose / .env bila perlu.
 ENTRYPOINT ["python", "producer.py"]

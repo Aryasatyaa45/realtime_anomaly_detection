@@ -15,6 +15,9 @@ env/
 ml/models/*.pkl
 ml/models/*.joblib
 
+# === Jar Flink (diunduh saat build/setup, besar — jangan di-commit) ===
+flink_job/jars/*.jar
+
 # === Rahasia / config lokal ===
 .env
 

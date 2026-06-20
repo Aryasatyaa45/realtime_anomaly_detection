@@ -33,8 +33,9 @@ services:
     ulimits:
       memlock: -1
     healthcheck:
-      # Cek HTTP API hidup. /ping dilayani server tanpa perlu autentikasi.
-      test: ["CMD-SHELL", "curl -fsS http://localhost:3000/ping || exit 1"]
+      # Image apache/iggy TIDAK menyertakan curl/wget, tapi ADA bash -> cek port HTTP (3000)
+      # terbuka via /dev/tcp bash. Cukup sebagai sinyal readiness untuk depends_on.
+      test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/127.0.0.1/3000' || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -55,11 +56,55 @@ services:
   #   volumes:
   #     - ./data:/data:ro
 
-  # --- Minggu 4: Flink + ML scorer + Paimon ---
-  # (ditambahkan saat Minggu 4)
+  # --- Minggu 4: Bridge Iggy(HTTP) -> TCP socket untuk Flink ---
+  bridge:
+    build: ./producer
+    container_name: bridge
+    # Override ENTRYPOINT producer.py -> jalankan bridge.py. Konek Iggy via nama service
+    # (jaringan compose = IPv4, tak kena masalah localhost/IPv6); sajikan socket di 9999.
+    entrypoint: ["python", "bridge.py"]
+    command: ["--host", "iggy", "--port", "3000", "--bind-host", "0.0.0.0", "--socket-port", "9999"]
+    environment:
+      PYTHONUNBUFFERED: "1"          # agar print() bridge langsung tampil di docker logs
+      IGGY_ROOT_USERNAME: ${IGGY_ROOT_USERNAME:-iggy}
+      IGGY_ROOT_PASSWORD: ${IGGY_ROOT_PASSWORD:-iggy}
+    depends_on:
+      iggy:
+        condition: service_healthy
 
+  # --- Minggu 4: Flink (session cluster: JobManager + TaskManager) ---
+  jobmanager:
+    build: ./flink_job
+    image: anomaly-flink:1.20.4      # tag agar TM pakai image yang sama tanpa build ulang
+    container_name: jobmanager
+    command: jobmanager
+    ports:
+      - "8081:8081"                  # Flink Web UI
+    environment:
+      # Memori dibatasi: mesin dev ~4 GB (VM Docker) harus memuat iggy+bridge+JM+TM sekaligus.
+      - |
+        FLINK_PROPERTIES=
+        jobmanager.rpc.address: jobmanager
+        jobmanager.memory.process.size: 1024m
+    depends_on:
+      bridge:
+        condition: service_started
+
+  taskmanager:
+    image: anomaly-flink:1.20.4      # reuse image hasil build jobmanager
+    container_name: taskmanager
+    command: taskmanager
+    environment:
+      - |
+        FLINK_PROPERTIES=
+        jobmanager.rpc.address: jobmanager
+        taskmanager.numberOfTaskSlots: 2
+        taskmanager.memory.process.size: 1280m
+    depends_on:
+      - jobmanager
+
+  # --- Minggu 4: ML scorer service (ditambahkan di 4d/4f) ---
   # --- Minggu 5: Postgres (sink dashboard) ---
-  # (ditambahkan saat Minggu 5)
 
 volumes:
   iggy_data:
