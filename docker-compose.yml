@@ -103,7 +103,27 @@ services:
     depends_on:
       - jobmanager
 
-  # --- Minggu 4: ML scorer service (ditambahkan di 4d/4f) ---
+  # --- Minggu 4: ML scorer service (HTTP, terpisah dari image PyFlink) ---
+  # Dipisah agar versi dependency ML dipin PERSIS sama dengan environment training
+  # (numpy/sklearn/pyod/river) -> unpickle ecod.pkl/hst.pkl tak gagal. Flink job (4d)
+  # memanggil POST /score per-event lewat nama service `scorer` di jaringan compose.
+  scorer:
+    build: ./ml
+    container_name: scorer
+    environment:
+      PYTHONUNBUFFERED: "1"          # log scorer langsung tampil di docker logs
+    volumes:
+      # Model besar (~275 MB) TIDAK ikut image; di-mount read-only saat runtime.
+      - ./ml/models:/app/models:ro
+    healthcheck:
+      # Image python:3.11-slim tak punya curl -> pakai urllib stdlib. start_period
+      # longgar (120s) karena load ecod.pkl ~234 MB bisa makan puluhan detik.
+      test: ["CMD-SHELL", "python -c \"import urllib.request as u,sys; sys.exit(0 if u.urlopen('http://127.0.0.1:8000/health').status==200 else 1)\""]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 120s
+
   # --- Minggu 5: Postgres (sink dashboard) ---
 
 volumes:
