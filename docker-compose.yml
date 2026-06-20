@@ -41,20 +41,24 @@ services:
       retries: 5
       start_period: 15s
 
-  # --- Minggu 3: Producer (replay CSV -> Iggy) ---
-  # Untuk Minggu 3 producer divalidasi dari host (venv). Service container ini
-  # disiapkan untuk dipakai penuh di Minggu 4 (pipeline lewat docker compose up).
-  # producer:
-  #   build: ./producer
-  #   container_name: producer
-  #   depends_on:
-  #     iggy:
-  #       condition: service_healthy
-  #   env_file: .env
-  #   environment:
-  #     IGGY_HOST: iggy            # nama service di jaringan compose
-  #   volumes:
-  #     - ./data:/data:ro
+  # --- Minggu 3/4: Producer (replay CSV -> Iggy) ---
+  # Seed data sekali jalan saat `docker compose up`, lalu exit (restart: no).
+  # Bridge mem-poll Iggy dari offset 0, jadi urutan producer vs job tidak kritis.
+  producer:
+    build: ./producer
+    container_name: producer
+    depends_on:
+      iggy:
+        condition: service_healthy
+    environment:
+      IGGY_HOST: iggy             # nama service di jaringan compose
+      IGGY_ROOT_USERNAME: ${IGGY_ROOT_USERNAME:-iggy}
+      IGGY_ROOT_PASSWORD: ${IGGY_ROOT_PASSWORD:-iggy}
+      DATA_PATH: /data/creditcard.csv
+    command: ["--limit", "1000"]   # 1000 tx cukup untuk demo end-to-end
+    volumes:
+      - ./data:/data:ro
+    restart: "no"
 
   # --- Minggu 4: Bridge Iggy(HTTP) -> TCP socket untuk Flink ---
   bridge:
@@ -128,6 +132,45 @@ services:
       timeout: 5s
       retries: 5
       start_period: 120s
+
+  # --- Minggu 4f: Job-submitter (auto `flink run` saat cluster siap, lalu exit) ---
+  # Pakai image Flink yang sama (punya pyflink venv + job.py 4e ter-baked). Menunggu
+  # JobManager REST melaporkan >=1 TaskManager teregistrasi, baru submit job detached.
+  # Memisahkan submit ke service sendiri = `docker compose up` jalan tanpa langkah manual.
+  job-submitter:
+    image: anomaly-flink:1.20.4
+    container_name: job-submitter
+    # WAJIB jalan sebagai user `flink` (uid 9999), BUKAN root. Override entrypoint ke bash
+    # mem-bypass `gosu flink` bawaan image -> tanpa baris ini container jadi root, lalu DDL
+    # `CREATE TABLE` (client-side) membuat folder katalog default.db/scores/schema milik root.
+    # Writer di TaskManager (jalan sbg flink) lalu gagal mkdir bucket-0 di dalamnya:
+    # "Mkdirs failed to create .../bucket-0". Samakan user -> semua warehouse milik flink.
+    user: flink
+    volumes:
+      # WAJIB: DDL `CREATE TABLE` Paimon dieksekusi di sisi CLIENT (di sinilah `flink run`
+      # berjalan). Tanpa mount warehouse bersama, schema tertulis ke /opt/paimon ephemeral
+      # milik container ini -> committer (JM) & writer (TM) baca volume bersama yang kosong
+      # schema -> "Cannot get latest schema for table scores" -> job RESTARTING. Mount sama.
+      - paimon_data:/opt/paimon
+    depends_on:
+      jobmanager:
+        condition: service_started
+      taskmanager:
+        condition: service_started
+      bridge:
+        condition: service_started
+      scorer:
+        condition: service_healthy
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        set -e
+        echo "[submitter] menunggu cluster Flink siap (jobmanager + >=1 taskmanager)..."
+        until python -c "import urllib.request,json,sys; d=json.load(urllib.request.urlopen('http://jobmanager:8081/overview')); sys.exit(0 if d.get('taskmanagers',0)>=1 else 1)" 2>/dev/null; do sleep 2; done
+        echo "[submitter] cluster siap, submit job 4e (skor -> Paimon)..."
+        flink run -m jobmanager:8081 -d -py /opt/flink_job/job.py
+        echo "[submitter] job tersubmit, selesai."
+    restart: "no"
 
   # --- Minggu 5: Postgres (sink dashboard) ---
 

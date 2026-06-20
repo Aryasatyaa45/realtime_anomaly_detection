@@ -36,3 +36,6 @@ RUN mkdir -p /opt/paimon && chown flink:flink /opt/paimon
 
 # Kode job (di-submit via `flink run -py /opt/flink_job/job.py`).
 COPY job.py /opt/flink_job/job.py
+# Alat verifikasi batch (baca ringkasan tabel scores). Ikut di-baked agar
+# `flink run -py /opt/flink_job/verify_count.py` reproducible tanpa docker cp manual.
+COPY verify_count.py /opt/flink_job/verify_count.py
