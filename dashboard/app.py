@@ -85,6 +85,15 @@ def load_recent(engine: Engine, limit: int) -> pd.DataFrame:
     return df.sort_values("id").reset_index(drop=True)
 
 
+def load_anomalies(engine: Engine) -> pd.DataFrame:
+    """Ambil SEMUA anomali (urut skor HST tertinggi) — lepas dari window 'terbaru'."""
+    q = text(
+        "SELECT id, waktu, amount, kelas, skor_ecod, skor_hst, is_anomali, ingested_at "
+        "FROM scores WHERE is_anomali ORDER BY skor_hst DESC"
+    )
+    return pd.read_sql(q, engine)
+
+
 def log_anomali_baru(anomalies: pd.DataFrame) -> None:
     """Catat anomali yang BELUM pernah di-log (lacak id terakhir di session_state)."""
     last = st.session_state.get("last_logged_id", 0)
@@ -163,9 +172,9 @@ def grafik_skor(df: pd.DataFrame) -> go.Figure:
     return fig
 
 
-def tabel_transaksi(df: pd.DataFrame, height: int = 420) -> None:
-    """Tabel transaksi (id terbaru di atas), baris anomali disorot merah."""
-    tampil = df.sort_values("id", ascending=False)[
+def tabel_transaksi(df: pd.DataFrame, height: int = 420, urut: str = "id") -> None:
+    """Tabel transaksi (urut kolom `urut` menurun), baris anomali disorot merah."""
+    tampil = df.sort_values(urut, ascending=False)[
         ["id", "amount", "kelas", "skor_ecod", "skor_hst", "is_anomali", "ingested_at"]
     ].rename(columns={
         "amount": "Amount", "kelas": "Class (label)", "skor_ecod": "skor ECOD",
@@ -214,6 +223,46 @@ def bagian_live() -> None:
     tabel_transaksi(df)
 
 
+# --------------------------------------------------------------------------- tab: anomali
+
+def bagian_anomali() -> None:
+    """Tab Anomali Teratas: SEMUA anomali dari DB (urut skor), lepas dari window live."""
+    engine = get_engine()
+    try:
+        df = load_anomalies(engine)
+    except Exception as e:  # noqa: BLE001
+        st.warning(f"Belum bisa baca Postgres: {e}")
+        return
+
+    if df.empty:
+        st.info("Belum ada anomali terdeteksi.")
+        return
+
+    # kelas=1 = fraud asli berlabel; berapa yang berhasil ditangkap model.
+    fraud_asli = int((df["kelas"] == 1).sum())
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Total anomali terdeteksi", f"{len(df):,}")
+    c2.metric("Di antaranya fraud asli (label=1)", f"{fraud_asli:,}",
+              help="Baris yang benar-benar fraud menurut label dataset DAN ditandai model.")
+    c3.metric("Skor HST tertinggi", f"{df['skor_hst'].max():.4f}")
+
+    st.caption(
+        "Semua transaksi yang ditandai anomali oleh model utama (Half-Space Trees), "
+        "urut dari skor tertinggi. Berbeda dengan tab Monitor Live yang hanya melihat "
+        "transaksi terbaru — di sini seluruh anomali sepanjang aliran data ditampilkan."
+    )
+    st.plotly_chart(grafik_skor(df.sort_values("id")), use_container_width=True)
+
+    st.subheader(f"Daftar {len(df)} anomali (skor tertinggi di atas)")
+    tabel_transaksi(df, height=480, urut="skor_hst")
+
+    st.download_button(
+        "⬇️ Unduh daftar anomali (CSV)",
+        df.to_csv(index=False).encode("utf-8"),
+        file_name="anomali.csv", mime="text/csv",
+    )
+
+
 # --------------------------------------------------------------------------- tab: log
 
 def bagian_log() -> None:
@@ -248,12 +297,17 @@ def main() -> None:
             f"Skor [0..1], anomali bila ≥ **{AMBANG_HST}**.\n"
             f"- **ECOD** = baseline statistik. Skor terbuka, anomali bila ≥ **{AMBANG_ECOD}**.\n"
             "- **Tanda merah** di grafik & tabel = transaksi yang ditandai anomali oleh model utama.\n"
-            "- Tab **Log Alert**: jejak anomali yang tercatat."
+            "- Tab **Anomali Teratas**: seluruh anomali (urut skor), termasuk yang fraud asli.\n"
+            "- Tab **Log Alert**: jejak anomali yang tercatat live."
         )
 
-    tab_live, tab_log = st.tabs(["📡 Monitor Live", "📋 Log Alert"])
+    tab_live, tab_anomali, tab_log = st.tabs(
+        ["📡 Monitor Live", "🚨 Anomali Teratas", "📋 Log Alert"]
+    )
     with tab_live:
         bagian_live()
+    with tab_anomali:
+        bagian_anomali()
     with tab_log:
         bagian_log()
 
