@@ -10,7 +10,11 @@ RUN apt-get update -y && \
     rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# --trusted-host: network Mak melakukan TLS interception (proxy/AV) sehingga verifikasi
+# sertifikat PyPI gagal di dalam container (pola sama dgn `curl --ssl-no-revoke` utk Maven).
+RUN pip install --no-cache-dir \
+    --trusted-host pypi.org --trusted-host files.pythonhosted.org \
+    -r requirements.txt
 
 COPY app.py .
 

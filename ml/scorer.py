@@ -29,6 +29,7 @@ import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
+from urllib.parse import parse_qs, urlparse
 
 import joblib
 import numpy as np
@@ -165,7 +166,7 @@ class Scorer:
             raise ValueError(f"Nilai fitur tidak numerik: {exc}") from exc
         return np.array([values], dtype=float)
 
-    def score(self, event: dict[str, Any]) -> dict[str, Any]:
+    def score(self, event: dict[str, Any], learn: bool = True) -> dict[str, Any]:
         """Skor satu transaksi dengan kedua model.
 
         ECOD memakai StandardScaler + decision_function; HST memakai MinMaxScaler + score_one,
@@ -173,6 +174,9 @@ class Scorer:
 
         Args:
             event: Satu transaksi (dict fitur V1..V28, Amount, kolom lain diabaikan).
+            learn: Bila True (default), HST memperbarui state via learn_one (dipakai pipeline
+                streaming). Bila False, HST hanya skor TANPA belajar — dipakai untuk skoring
+                ad-hoc (mis. upload CSV di dashboard) agar tidak mencemari state model live.
 
         Returns:
             Dict berisi skor_ecod, skor_hst, is_anomali_ecod, is_anomali_hst, is_anomali.
@@ -183,12 +187,13 @@ class Scorer:
         x_ecod = self._scaler_ecod.transform(x_raw)
         skor_ecod = self._ecod.decision_function_one(x_ecod)
 
-        # HST — score lalu learn (online); serialisasi via lock karena state berubah.
+        # HST — score lalu (opsional) learn (online); serialisasi via lock karena state berubah.
         x_hst = self._scaler_hst.transform(x_raw)
         sample = {name: float(val) for name, val in zip(FEATURE_COLUMNS, x_hst[0])}
         with self._hst_lock:
             skor_hst = float(self._hst.score_one(sample))
-            self._hst.learn_one(sample)
+            if learn:
+                self._hst.learn_one(sample)
 
         is_anom_ecod = skor_ecod >= ECOD_THRESHOLD
         is_anom_hst = skor_hst >= HST_THRESHOLD
@@ -230,9 +235,13 @@ def make_handler(scorer: Scorer) -> type[BaseHTTPRequestHandler]:
                 self._send_json(404, {"error": f"path tidak dikenal: {self.path}"})
 
         def do_POST(self) -> None:  # noqa: N802
-            if self.path != "/score":
+            parsed = urlparse(self.path)
+            if parsed.path != "/score":
                 self._send_json(404, {"error": f"path tidak dikenal: {self.path}"})
                 return
+            # ?learn=false -> skor TANPA update state HST (dipakai upload CSV ad-hoc di dashboard
+            # agar state model live tak tercemar). Default (pipeline streaming) tetap belajar.
+            learn = parse_qs(parsed.query).get("learn", ["true"])[0].lower() != "false"
             try:
                 length = int(self.headers.get("Content-Length", 0))
                 raw = self.rfile.read(length) if length else b""
@@ -244,7 +253,7 @@ def make_handler(scorer: Scorer) -> type[BaseHTTPRequestHandler]:
                 return
 
             try:
-                result = scorer.score(event)
+                result = scorer.score(event, learn=learn)
             except KeyError as exc:
                 self._send_json(400, {"error": str(exc)})
                 return

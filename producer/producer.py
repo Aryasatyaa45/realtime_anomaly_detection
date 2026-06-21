@@ -89,10 +89,16 @@ def main() -> None:
         reader = csv.DictReader(f)
         for row in reader:
             event = {key: _coerce(val) for key, val in row.items()}
-            try:
-                client.send_json(event)
-            except IggyHTTPError as exc:
-                raise SystemExit(f"Berhenti: {exc}")
+            # Retry blip transien (mis. Iggy read-timeout sesaat di bawah beban) dgn backoff;
+            # 1 hiccup tak boleh membunuh seeding 50k. ponytail: 3 percobaan cukup utk demo.
+            for attempt in range(1, 4):
+                try:
+                    client.send_json(event)
+                    break
+                except IggyHTTPError as exc:
+                    if attempt == 3:
+                        raise SystemExit(f"Berhenti di transaksi ke-{sent}: {exc}")
+                    time.sleep(attempt)  # 1s, 2s — beri Iggy waktu pulih
 
             sent += 1
             if sent % 500 == 0:
