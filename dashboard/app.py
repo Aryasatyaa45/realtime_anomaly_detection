@@ -1,9 +1,8 @@
-"""Dashboard Streamlit: monitor transaksi live + deteksi dataset + log alert (Minggu 5-6).
+"""Dashboard Streamlit: monitor transaksi live + log alert (Minggu 5-6).
 
-Tiga tab (native st.tabs, tanpa router tambahan):
-  1. Monitor Live   — baca tabel `scores` (Postgres/Supabase), auto-refresh 2 dtk.
-  2. Deteksi Dataset — upload CSV -> skor via service scorer (?learn=false, tak ubah state live).
-  3. Log Alert       — isi /app/alerts.log.
+Dua tab (native st.tabs, tanpa router tambahan):
+  1. Monitor Live — baca tabel `scores` (Postgres/Supabase), auto-refresh 2 dtk.
+  2. Log Alert    — isi /app/alerts.log.
 
 Sumber data live diisi pipeline Flink (sink JDBC kedua, di samping Paimon).
 
@@ -18,7 +17,6 @@ import os
 
 import pandas as pd
 import plotly.graph_objects as go
-import requests
 import streamlit as st
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
@@ -27,10 +25,6 @@ from sqlalchemy.engine import Engine
 AMBANG_HST = 0.914
 AMBANG_ECOD = 120.58
 
-# Service scorer di jaringan compose (nama service, bukan localhost). Dipakai tab upload.
-SCORER_URL = os.environ.get("SCORER_URL", "http://scorer:8000")
-# ponytail: batas baris di-skor per upload (1 HTTP request/baris ke scorer). Naikkan kalau perlu.
-MAKS_UPLOAD = 2000
 LOG_PATH = "/app/alerts.log"
 
 # Alert ke file (ponytail: minimal — banner + log file. Telegram ditunda sampai diminta).
@@ -59,12 +53,6 @@ def db_url() -> str:
 def get_engine() -> Engine:
     """Engine SQLAlchemy dibuat sekali (cache lintas rerun). pool_pre_ping anti koneksi mati."""
     return create_engine(db_url(), pool_pre_ping=True)
-
-
-@st.cache_resource
-def scorer_session() -> requests.Session:
-    """Session requests reusable (keep-alive) untuk skoring batch upload."""
-    return requests.Session()
 
 
 def load_summary(engine: Engine) -> dict:
@@ -219,90 +207,6 @@ def bagian_live() -> None:
     tabel_transaksi(df)
 
 
-# --------------------------------------------------------------------------- tab: upload
-
-def skor_dataframe(df: pd.DataFrame) -> pd.DataFrame | None:
-    """Skor tiap baris via service scorer (learn=false). Kembalikan df + kolom skor, atau None."""
-    sess = scorer_session()
-    records = df.to_dict("records")
-    n = len(records)
-    skor_ecod, skor_hst, is_anom = [], [], []
-    prog = st.progress(0.0, text="Menskor transaksi...")
-    try:
-        for i, row in enumerate(records):
-            r = sess.post(f"{SCORER_URL}/score?learn=false", json=row, timeout=10)
-            r.raise_for_status()
-            d = r.json()
-            skor_ecod.append(d["skor_ecod"])
-            skor_hst.append(d["skor_hst"])
-            is_anom.append(bool(d["is_anomali"]))
-            if i % 25 == 0 or i == n - 1:
-                prog.progress((i + 1) / n, text=f"Menskor {i + 1}/{n} transaksi...")
-    except Exception as e:  # noqa: BLE001
-        prog.empty()
-        st.error(f"Gagal menghubungi scorer di {SCORER_URL}: {e}\n\n"
-                 "Pastikan service scorer jalan: `docker compose up -d scorer`.")
-        return None
-    prog.empty()
-
-    out = df.copy()
-    out["id"] = range(1, len(out) + 1)
-    out["amount"] = df["Amount"] if "Amount" in df.columns else df.get("amount", 0.0)
-    out["skor_ecod"] = skor_ecod
-    out["skor_hst"] = skor_hst
-    out["is_anomali"] = is_anom
-    return out
-
-
-def bagian_upload() -> None:
-    """Tab Deteksi Dataset: upload CSV -> skor batch -> visualisasi + unduh hasil."""
-    st.markdown(
-        "Upload **CSV transaksi** (kolom `V1`..`V28`, `Amount` — format dataset Kaggle Credit "
-        "Card Fraud). Tiap baris diskor oleh **kedua model**. Skoring memakai `learn=false` "
-        "sehingga **tidak mengubah** state model pipeline live."
-    )
-    file = st.file_uploader("Pilih file CSV", type=["csv"])
-    if file is None:
-        st.caption("Belum ada file. Contoh: potongan `data/creditcard.csv`.")
-        return
-
-    try:
-        df = pd.read_csv(file)
-    except Exception as e:  # noqa: BLE001
-        st.error(f"Gagal membaca CSV: {e}")
-        return
-
-    st.write(f"File berisi **{len(df):,}** baris, {len(df.columns)} kolom.")
-    if len(df) > MAKS_UPLOAD:
-        st.warning(f"Hanya {MAKS_UPLOAD:,} baris pertama yang diskor (batas demo).")
-        df = df.head(MAKS_UPLOAD)
-
-    if not st.button("🔍 Deteksi anomali", type="primary"):
-        return
-
-    hasil = skor_dataframe(df)
-    if hasil is None:
-        return
-
-    n_anom = int(hasil["is_anomali"].sum())
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Baris diskor", f"{len(hasil):,}")
-    c2.metric("Anomali terdeteksi", f"{n_anom:,}")
-    c3.metric("Rasio anomali", f"{(n_anom / len(hasil) * 100):.2f}%")
-
-    st.plotly_chart(grafik_amount(hasil), use_container_width=True)
-    st.plotly_chart(grafik_skor(hasil), use_container_width=True)
-
-    st.subheader(f"Hasil deteksi — {len(hasil)} baris")
-    tabel_transaksi(hasil, height=420)
-
-    st.download_button(
-        "⬇️ Unduh hasil (CSV)",
-        hasil.to_csv(index=False).encode("utf-8"),
-        file_name="hasil_deteksi.csv", mime="text/csv",
-    )
-
-
 # --------------------------------------------------------------------------- tab: log
 
 def bagian_log() -> None:
@@ -337,17 +241,12 @@ def main() -> None:
             f"Skor [0..1], anomali bila ≥ **{AMBANG_HST}**.\n"
             f"- **ECOD** = baseline statistik. Skor terbuka, anomali bila ≥ **{AMBANG_ECOD}**.\n"
             "- **Tanda merah** di grafik & tabel = transaksi yang ditandai anomali oleh model utama.\n"
-            "- Tab **Deteksi Dataset**: upload CSV-mu sendiri untuk diskor tanpa mengubah model live.\n"
             "- Tab **Log Alert**: jejak anomali yang tercatat."
         )
 
-    tab_live, tab_upload, tab_log = st.tabs(
-        ["📡 Monitor Live", "📤 Deteksi Dataset", "📋 Log Alert"]
-    )
+    tab_live, tab_log = st.tabs(["📡 Monitor Live", "📋 Log Alert"])
     with tab_live:
         bagian_live()
-    with tab_upload:
-        bagian_upload()
     with tab_log:
         bagian_log()
 

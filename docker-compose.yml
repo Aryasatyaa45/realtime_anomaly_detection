@@ -225,7 +225,6 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-anomaly}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-anomaly}
       DASHBOARD_DB_URL: ${DASHBOARD_DB_URL:-}   # kosong = bangun dari POSTGRES_* di atas
-      SCORER_URL: ${SCORER_URL:-http://scorer:8000}   # tab "Deteksi Dataset" panggil scorer
     depends_on:
       postgres:
         condition: service_healthy
