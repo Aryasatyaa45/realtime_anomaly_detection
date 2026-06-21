@@ -4,8 +4,9 @@ Deteksi **fraud transaksi kartu kredit** secara *real-time* dengan arsitektur st
 penuh, membandingkan dua model anomaly detection: **ECOD** (baseline statistik
 parameter-free) vs **Half-Space Trees** (online learning sejati, belajar per-transaksi).
 
-> 🔴 **Demo online:** _(isi setelah deploy)_ → `https://<app>.streamlit.app`
-> Dashboard membaca hasil run pipeline (50.000 transaksi) dari Postgres/Supabase.
+### 🔴 [**Demo online → realtimeanomalydetection-aryasatyaa45.streamlit.app**](https://realtimeanomalydetection-aryasatyaa45.streamlit.app/)
+
+Dashboard membaca hasil run pipeline (50.000 transaksi) dari Supabase (Postgres terkelola).
 
 ---
 
