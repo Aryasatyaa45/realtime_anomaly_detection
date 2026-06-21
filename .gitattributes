@@ -1,0 +1,4 @@
+# SQL & shell harus LF: COPY block di seed_supabase.sql korup bila ada CR,
+# dan skrip .sh gagal di Linux/container bila ber-CRLF.
+*.sql text eol=lf
+*.sh  text eol=lf
