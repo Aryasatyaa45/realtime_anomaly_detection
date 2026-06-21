@@ -1,8 +1,9 @@
-"""Dashboard Streamlit: monitor transaksi live + log alert (Minggu 5-6).
+"""Dashboard Streamlit: monitor transaksi live + anomali + log alert (Minggu 5-6).
 
-Dua tab (native st.tabs, tanpa router tambahan):
-  1. Monitor Live — baca tabel `scores` (Postgres/Supabase), auto-refresh 2 dtk.
-  2. Log Alert    — isi /app/alerts.log.
+Tiga tab (native st.tabs, tanpa router tambahan):
+  1. Monitor Live   — baca tabel `scores` (Postgres/Supabase), auto-refresh 2 dtk.
+  2. Anomali Teratas — seluruh anomali dari DB, urut skor.
+  3. Log Alert       — jejak alert tiap anomali (dibangun dari DB).
 
 Sumber data live diisi pipeline Flink (sink JDBC kedua, di samping Paimon).
 
@@ -12,9 +13,7 @@ Jalankan lokal (via compose): `docker compose up dashboard` -> buka http://127.0
 
 from __future__ import annotations
 
-import logging
 import os
-import tempfile
 
 import pandas as pd
 import plotly.graph_objects as go
@@ -25,22 +24,6 @@ from sqlalchemy.engine import Engine
 # Ambang model (hasil tuning Minggu 2). Ditampilkan sebagai garis acuan di grafik skor.
 AMBANG_HST = 0.914
 AMBANG_ECOD = 120.58
-
-# Default /app/alerts.log (cocok di container). Fallback ke tmp bila tak bisa ditulis —
-# mis. Streamlit Cloud yang read-only di luar tmp; tanpa ini FileHandler crash saat import.
-LOG_PATH = os.environ.get("LOG_PATH", "/app/alerts.log")
-try:
-    open(LOG_PATH, "a").close()
-except OSError:
-    LOG_PATH = os.path.join(tempfile.gettempdir(), "alerts.log")
-
-# Alert ke file (ponytail: minimal — banner + log file. Telegram ditunda sampai diminta).
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
-    handlers=[logging.FileHandler(LOG_PATH), logging.StreamHandler()],
-)
-logger = logging.getLogger("alert")
 
 
 def db_url() -> str:
@@ -92,19 +75,6 @@ def load_anomalies(engine: Engine) -> pd.DataFrame:
         "FROM scores WHERE is_anomali ORDER BY skor_hst DESC"
     )
     return pd.read_sql(q, engine)
-
-
-def log_anomali_baru(anomalies: pd.DataFrame) -> None:
-    """Catat anomali yang BELUM pernah di-log (lacak id terakhir di session_state)."""
-    last = st.session_state.get("last_logged_id", 0)
-    baru = anomalies[anomalies["id"] > last]
-    for _, r in baru.iterrows():
-        logger.warning(
-            "ANOMALI id=%s amount=%.2f skor_hst=%.4f skor_ecod=%.2f",
-            r["id"], r["amount"], r["skor_hst"], r["skor_ecod"],
-        )
-    if not anomalies.empty:
-        st.session_state["last_logged_id"] = int(anomalies["id"].max())
 
 
 # --------------------------------------------------------------------------- grafik
@@ -213,8 +183,7 @@ def bagian_live() -> None:
 
     anomalies = df[df["is_anomali"]]
     if not anomalies.empty:
-        st.error(f"🚨 {len(anomalies)} anomali pada {len(df)} transaksi terbaru — tercatat di tab Log.")
-        log_anomali_baru(anomalies)
+        st.error(f"🚨 {len(anomalies)} anomali pada {len(df)} transaksi terbaru — lihat tab Anomali.")
 
     st.plotly_chart(grafik_amount(df), use_container_width=True)
     st.plotly_chart(grafik_skor(df), use_container_width=True)
@@ -266,19 +235,30 @@ def bagian_anomali() -> None:
 # --------------------------------------------------------------------------- tab: log
 
 def bagian_log() -> None:
-    """Tab Log Alert: tampilkan baris terakhir /app/alerts.log."""
-    st.markdown(f"Isi `{LOG_PATH}` — alert anomali & aktivitas dashboard (terbaru di bawah).")
-    n = st.slider("Jumlah baris terakhir", 50, 1000, 200, step=50)
-    if st.button("🔄 Muat ulang log"):
-        st.rerun()
+    """Tab Log Alert: jejak alert tiap anomali, dibangun dari DB (bukan file)."""
+    engine = get_engine()
     try:
-        with open(LOG_PATH, encoding="utf-8") as f:
-            lines = f.readlines()
-        teks = "".join(lines[-n:]) or "(log masih kosong)"
-        st.caption(f"Menampilkan {min(n, len(lines))} dari {len(lines)} baris.")
-    except FileNotFoundError:
-        teks = "(file log belum ada — belum ada aktivitas)"
-    st.code(teks, language="log")
+        df = load_anomalies(engine)
+    except Exception as e:  # noqa: BLE001
+        st.warning(f"Belum bisa baca Postgres: {e}")
+        return
+
+    st.markdown("Jejak **alert** — tiap transaksi yang ditandai anomali oleh model utama "
+                "menghasilkan satu baris alert (terbaru di atas).")
+    if df.empty:
+        st.info("(belum ada alert — belum ada anomali terdeteksi)")
+        return
+
+    n = st.slider("Jumlah alert ditampilkan", 50, 1000, 200, step=50)
+    d = df.sort_values("id", ascending=False).head(n)
+    lines = [
+        f"{r.ingested_at:%Y-%m-%d %H:%M:%S} [ALERT] ANOMALI id={r.id} "
+        f"amount={r.amount:.2f} skor_hst={r.skor_hst:.4f} skor_ecod={r.skor_ecod:.2f}"
+        + ("  <- FRAUD ASLI (label=1)" if r.kelas == 1 else "")
+        for r in d.itertuples()
+    ]
+    st.caption(f"Menampilkan {len(d)} dari {len(df):,} total alert anomali.")
+    st.code("\n".join(lines), language="log")
 
 
 # --------------------------------------------------------------------------- main
@@ -298,7 +278,7 @@ def main() -> None:
             f"- **ECOD** = baseline statistik. Skor terbuka, anomali bila ≥ **{AMBANG_ECOD}**.\n"
             "- **Tanda merah** di grafik & tabel = transaksi yang ditandai anomali oleh model utama.\n"
             "- Tab **Anomali Teratas**: seluruh anomali (urut skor), termasuk yang fraud asli.\n"
-            "- Tab **Log Alert**: jejak anomali yang tercatat live."
+            "- Tab **Log Alert**: jejak alert tiap anomali yang terdeteksi."
         )
 
     tab_live, tab_anomali, tab_log = st.tabs(
