@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 import os
+import tempfile
 
 import pandas as pd
 import plotly.graph_objects as go
@@ -25,7 +26,13 @@ from sqlalchemy.engine import Engine
 AMBANG_HST = 0.914
 AMBANG_ECOD = 120.58
 
-LOG_PATH = "/app/alerts.log"
+# Default /app/alerts.log (cocok di container). Fallback ke tmp bila tak bisa ditulis —
+# mis. Streamlit Cloud yang read-only di luar tmp; tanpa ini FileHandler crash saat import.
+LOG_PATH = os.environ.get("LOG_PATH", "/app/alerts.log")
+try:
+    open(LOG_PATH, "a").close()
+except OSError:
+    LOG_PATH = os.path.join(tempfile.gettempdir(), "alerts.log")
 
 # Alert ke file (ponytail: minimal — banner + log file. Telegram ditunda sampai diminta).
 logging.basicConfig(
