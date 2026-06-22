@@ -28,7 +28,8 @@ data/creditcard.csv
                    └────────────┘                              ▼
                                                         ┌────────────┐
                                                         │ Streamlit  │  📡 Monitor Live
-                                                        │ dashboard  │  📋 Log Alert
+                                                        │ dashboard  │  🚨 Anomali Teratas
+                                                        │            │  📋 Log Alert
                                                         └────────────┘
 ```
 
@@ -116,7 +117,7 @@ Dashboard di-deploy ke **Streamlit Cloud** dan membaca snapshot hasil run dari *
 producer/    replay CSV → Iggy (HTTP) + bridge Iggy→socket utk Flink
 ml/          train.py, evaluate.py, scorer.py (service HTTP skor 2 model)
 flink_job/   job.py (PyFlink: skor per-event + sink Paimon & Postgres)
-dashboard/   app.py (Streamlit: Monitor Live + Log Alert)
+dashboard/   app.py (Streamlit: Monitor Live + Anomali Teratas + Log Alert)
 db/          init.sql (skema) + seed_supabase.sql (skema+data utk online)
 scripts/     fetch_jars.sh
 docs/        catatan per-minggu
