@@ -10,6 +10,19 @@ Dashboard membaca hasil run pipeline (50.000 transaksi) dari Supabase (Postgres 
 
 ---
 
+## Tampilan Dashboard
+
+**📡 Monitor Live** — pantau transaksi terbaru, skor 2 model, dan garis ambang.
+![Monitor Live](assets/monitor_live.png)
+
+**🚨 Anomali Teratas** — 142 anomali diurutkan skor HST, tandai fraud asli (label=1).
+![Anomali Teratas](assets/anomali_teratas.png)
+
+**📋 Log Alert** — daftar alert tiap anomali terdeteksi.
+![Log Alert](assets/log_alert.png)
+
+---
+
 ## Arsitektur
 
 ```
